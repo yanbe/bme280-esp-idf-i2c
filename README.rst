@@ -1,13 +1,13 @@
 Sample code for reading values from a BME280 via ESP-IDF's I2C master driver
 ====================
 
-See main sample code main.c_.
+See main code main.c_.
 
 ----------
 About
 ----------
 
-This sample code implements procedures to read values from BME280 sensor (pressure, temperature, humidity) via ESP-IDF's I2C master driver. It supports both normal mode and forced mode described in `Bosch's BME280 datasheet`_, Section 3.3 Sensor modes, Page 12.
+This sample code implement procedures to read values from BME280 sensor (pressure, temperature, humidity) via ESP-IDF's I2C master driver. It supports both normal mode and forced mode described in `Bosch's BME280 datasheet`_, Section 3.3 Sensor modes, Page 12.
 
 ----------
 For local setup
