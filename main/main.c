@@ -10,11 +10,15 @@
 
 #define SDA_PIN GPIO_NUM_15
 #define SCL_PIN GPIO_NUM_2
+#define BME280_ADDRESS BME280_I2C_ADDR_SEC
 
 #define TAG_BME280 "BME280"
 
 #define I2C_MASTER_ACK 0
 #define I2C_MASTER_NACK 1
+
+#define BME280_CALLBACK_OK 0
+#define BME280_CALLBACK_FAIL -1
 
 void i2c_master_init()
 {
@@ -24,15 +28,15 @@ void i2c_master_init()
 		.scl_io_num = SCL_PIN,
 		.sda_pullup_en = GPIO_PULLUP_ENABLE,
 		.scl_pullup_en = GPIO_PULLUP_ENABLE,
-		.master.clk_speed = 1000000
+		.master.clk_speed = 40000
 	};
 	i2c_param_config(I2C_NUM_0, &i2c_config);
 	i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0);
 }
 
-s8 BME280_I2C_bus_write(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
+uint8_t BME280_I2C_bus_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t *reg_data, uint16_t cnt)
 {
-	s32 iError = BME280_INIT_VALUE;
+	int8_t iError = 0;
 
 	esp_err_t espRc;
 	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -46,18 +50,18 @@ s8 BME280_I2C_bus_write(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
 
 	espRc = i2c_master_cmd_begin(I2C_NUM_0, cmd, 10/portTICK_PERIOD_MS);
 	if (espRc == ESP_OK) {
-		iError = SUCCESS;
+		iError = BME280_CALLBACK_OK;
 	} else {
-		iError = FAIL;
+		iError = BME280_CALLBACK_FAIL;
 	}
 	i2c_cmd_link_delete(cmd);
 
-	return (s8)iError;
+	return iError;
 }
 
-s8 BME280_I2C_bus_read(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
+int8_t BME280_I2C_bus_read(uint8_t dev_addr, uint8_t reg_addr, uint8_t *reg_data, uint16_t cnt)
 {
-	s32 iError = BME280_INIT_VALUE;
+	int8_t iError = 0;
 	esp_err_t espRc;
 
 	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -77,57 +81,61 @@ s8 BME280_I2C_bus_read(u8 dev_addr, u8 reg_addr, u8 *reg_data, u8 cnt)
 
 	espRc = i2c_master_cmd_begin(I2C_NUM_0, cmd, 10/portTICK_PERIOD_MS);
 	if (espRc == ESP_OK) {
-		iError = SUCCESS;
+		iError = BME280_CALLBACK_OK;
 	} else {
-		iError = FAIL;
+		iError = BME280_CALLBACK_FAIL;
 	}
 
 	i2c_cmd_link_delete(cmd);
 
-	return (s8)iError;
+	return iError;
 }
 
-void BME280_delay_msek(u32 msek)
+void BME280_delay_msek(uint32_t msek)
 {
 	vTaskDelay(msek/portTICK_PERIOD_MS);
 }
 
+
 void task_bme280_normal_mode(void *ignore)
 {
-	struct bme280_t bme280 = {
-		.bus_write = BME280_I2C_bus_write,
-		.bus_read = BME280_I2C_bus_read,
-		.dev_addr = BME280_I2C_ADDRESS2,
-		.delay_msec = BME280_delay_msek
+	struct bme280_dev bme280 = {
+		.write = BME280_I2C_bus_write,
+		.read = BME280_I2C_bus_read,
+		.intf = BME280_I2C_INTF,
+		.dev_id = BME280_ADDRESS,
+		.delay_ms = BME280_delay_msek
 	};
 
-	s32 com_rslt;
-	s32 v_uncomp_pressure_s32;
-	s32 v_uncomp_temperature_s32;
-	s32 v_uncomp_humidity_s32;
+	int32_t com_rslt;
+	uint8_t settings_sel;
+	struct bme280_data comp_data;
 
 	com_rslt = bme280_init(&bme280);
 
-	com_rslt += bme280_set_oversamp_pressure(BME280_OVERSAMP_16X);
-	com_rslt += bme280_set_oversamp_temperature(BME280_OVERSAMP_2X);
-	com_rslt += bme280_set_oversamp_humidity(BME280_OVERSAMP_1X);
+	bme280.settings.osr_p = BME280_OVERSAMPLING_16X;
+	bme280.settings.osr_t = BME280_OVERSAMPLING_2X;
+	bme280.settings.osr_h = BME280_OVERSAMPLING_1X;
+	bme280.settings.filter = BME280_FILTER_COEFF_16;
+	bme280.settings.standby_time = BME280_STANDBY_TIME_1_MS;
 
-	com_rslt += bme280_set_standby_durn(BME280_STANDBY_TIME_1_MS);
-	com_rslt += bme280_set_filter(BME280_FILTER_COEFF_16);
+	settings_sel = BME280_OSR_PRESS_SEL;
+	settings_sel |= BME280_OSR_TEMP_SEL;
+	settings_sel |= BME280_OSR_HUM_SEL;
+	settings_sel |= BME280_STANDBY_SEL;
+	settings_sel |= BME280_FILTER_SEL;
 
-	com_rslt += bme280_set_power_mode(BME280_NORMAL_MODE);
-	if (com_rslt == SUCCESS) {
+	com_rslt += bme280_set_sensor_settings(settings_sel, &bme280);
+	com_rslt += bme280_set_sensor_mode(BME280_NORMAL_MODE, &bme280);
+				
+	if (com_rslt == BME280_OK) {
 		while(true) {
-			vTaskDelay(40/portTICK_PERIOD_MS);
+			bme280.delay_ms(40);
 
-			com_rslt = bme280_read_uncomp_pressure_temperature_humidity(
-				&v_uncomp_pressure_s32, &v_uncomp_temperature_s32, &v_uncomp_humidity_s32);
+			com_rslt = bme280_get_sensor_data(BME280_ALL, &comp_data, &bme280);
 
-			if (com_rslt == SUCCESS) {
-				ESP_LOGI(TAG_BME280, "%.2f degC / %.3f hPa / %.3f %%",
-					bme280_compensate_temperature_double(v_uncomp_temperature_s32),
-					bme280_compensate_pressure_double(v_uncomp_pressure_s32)/100, // Pa -> hPa
-					bme280_compensate_humidity_double(v_uncomp_humidity_s32));
+			if (com_rslt == BME280_OK) {
+				ESP_LOGI(TAG_BME280, "%0.2f degC / %.2f kPa / %.2f %%", comp_data.temperature/100.0, comp_data.pressure/100.0, comp_data.humidity/1024.0);
 			} else {
 				ESP_LOGE(TAG_BME280, "measure error. code: %d", com_rslt);
 			}
@@ -140,35 +148,39 @@ void task_bme280_normal_mode(void *ignore)
 }
 
 void task_bme280_forced_mode(void *ignore) {
-	struct bme280_t bme280 = {
-		.bus_write = BME280_I2C_bus_write,
-		.bus_read = BME280_I2C_bus_read,
-		.dev_addr = BME280_I2C_ADDRESS2,
-		.delay_msec = BME280_delay_msek
+		struct bme280_dev bme280 = {
+		.write = BME280_I2C_bus_write,
+		.read = BME280_I2C_bus_read,
+		.intf = BME280_I2C_INTF,
+		.dev_id = BME280_ADDRESS,
+		.delay_ms = BME280_delay_msek
 	};
 
-	s32 com_rslt;
-	s32 v_uncomp_pressure_s32;
-	s32 v_uncomp_temperature_s32;
-	s32 v_uncomp_humidity_s32;
+	int32_t com_rslt;
+	uint8_t settings_sel;
+	struct bme280_data comp_data;
 
 	com_rslt = bme280_init(&bme280);
 
-	com_rslt += bme280_set_oversamp_pressure(BME280_OVERSAMP_1X);
-	com_rslt += bme280_set_oversamp_temperature(BME280_OVERSAMP_1X);
-	com_rslt += bme280_set_oversamp_humidity(BME280_OVERSAMP_1X);
+	bme280.settings.osr_p = BME280_OVERSAMPLING_16X;
+	bme280.settings.osr_t = BME280_OVERSAMPLING_2X;
+	bme280.settings.osr_h = BME280_OVERSAMPLING_1X;
+	bme280.settings.filter = BME280_FILTER_COEFF_16;
 
-	com_rslt += bme280_set_filter(BME280_FILTER_COEFF_OFF);
-	if (com_rslt == SUCCESS) {
+	settings_sel = BME280_OSR_PRESS_SEL | BME280_OSR_TEMP_SEL | BME280_OSR_HUM_SEL | BME280_FILTER_SEL;
+
+	com_rslt += bme280_set_sensor_settings(settings_sel, &bme280);
+				
+	if (com_rslt == BME280_OK) {
 		while(true) {
-			com_rslt = bme280_get_forced_uncomp_pressure_temperature_humidity(
-				&v_uncomp_pressure_s32, &v_uncomp_temperature_s32, &v_uncomp_humidity_s32);
+			com_rslt = bme280_set_sensor_mode(BME280_FORCED_MODE, &bme280);
 
-			if (com_rslt == SUCCESS) {
-				ESP_LOGI(TAG_BME280, "%.2f degC / %.3f hPa / %.3f %%",
-					bme280_compensate_temperature_double(v_uncomp_temperature_s32),
-					bme280_compensate_pressure_double(v_uncomp_pressure_s32)/100, // Pa -> hPa
-					bme280_compensate_humidity_double(v_uncomp_humidity_s32));
+			bme280.delay_ms(40);
+
+			com_rslt = bme280_get_sensor_data(BME280_ALL, &comp_data, &bme280);
+
+			if (com_rslt == BME280_OK) {
+				ESP_LOGI(TAG_BME280, "%0.2f degC / %.2f kPa / %.2f %%", comp_data.temperature/100.0, comp_data.pressure/100.0, comp_data.humidity/1024.0);
 			} else {
 				ESP_LOGE(TAG_BME280, "measure error. code: %d", com_rslt);
 			}
